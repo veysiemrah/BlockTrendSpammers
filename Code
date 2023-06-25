@@ -1,0 +1,160 @@
+import json
+import requests
+import datetime
+import tweepy
+import os
+
+#Analiz için ayarlar
+#TrendSpamPoint tweet içerisinde trend kelimelerden kaç tane geçtiğini gösterir.
+minTrendSpamPoint = 3 #Belirlenenden daha az SpamPoint olanları seçme
+maxFollowCount = 1000000 #Belirlenenden daha fazla takipçisi olanları seçme 
+maxRetweetCount = 500 #Belirlenenden daha fazla retweet alanları seçme
+maxUserCount = 5 #Her sorguda kaç tweet sorgulanacak. Twitter API limitlerini etkiler!!!
+
+trendNames = []
+formatTweetsData = {}
+usersToBlockOrMute = []
+filePath = "trends.txt"
+blockedUsers = []
+mutedUsers = []
+
+consumer_key = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+consumer_secret = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+access_token = 'xxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxx'
+access_token_secret = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+
+auth = tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret)
+api = tweepy.API(auth,wait_on_rate_limit=True)
+
+def getTrends(resource):
+    if resource == "twitter":
+        trendsdata = api.get_place_trends("23424969")
+        for trend in trendsdata[0]["trends"]:
+            trendNames.append(trend["name"])
+        if len(trendNames) <= 0:
+            print("Trend listesi boş.")
+    else:
+        baseURL = 'https://api.exportdata.io/trends/locations/tr?date='
+        date = datetime.datetime.now().strftime("%Y-%m-%d")
+        url = baseURL + date
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36'}
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            trendsdata = response.json()
+            for item in trendsdata:
+                trendNames.append(item["name"])
+            if len(trendNames) <= 0:
+                print("Trend listesi boş.")
+        else:
+            print('exportdata.io API İsteği başarısız oldu. Hata kodu:', response.status_code)
+
+def WriteToFile():
+    global trendNames
+    if not os.path.exists(filePath):
+        with open(filePath, "w", encoding="UTF-8") as file:
+         pass
+    with open(filePath, "r", encoding="UTF-8") as file:
+        if file.readable():
+            lines = file.readlines()
+            lastLine = lines[-1].strip() if lines else ""
+            if lastLine.startswith("Son"):
+                print(lastLine)
+            else:
+                print("Güncelleme tarihi bulunamadı.")
+        else:
+            print("Trend listesi boş")
+        choice = input("Güncel trend bilgileri alınsın mı? (E/H): ")
+        if choice.lower() == "e":
+            source = input("Trend bilgileri hangi kaynaktan alınsın? Twitter API(T), dataexport.io API(D): ")
+            if source.lower() == "t":
+                getTrends("twitter")
+                writeSource = "Kaynak: Twitter API"
+            else:
+                getTrends("dataexport")
+                writeSource = "Kaynak: dataexport.io API"
+            currentTime = datetime.datetime.now()
+            with open(filePath, "w", encoding="UTF-8") as file:
+                file.write("\n".join(trendNames) + "\n")
+                file.write("Son Güncelleme: " + currentTime.strftime("%d.%m.%Y %H:%M:%S") + " " + writeSource)
+        else:
+            print("Trend listesi güncellenmedi.")
+            with open(filePath, "w", encoding="UTF-8") as file:
+                trendNames = [x.strip() for x in lines[:-1]]
+
+def analyzeTweets(searchKey):
+    tweets = api.search_tweets(q=searchKey, result_type="popular", count=maxUserCount, tweet_mode="extended")
+    for tweet in tweets:
+        formatTweetsData[tweet.user.screen_name] = {"Text": tweet.full_text,
+                                                    "Retweet Count": tweet.retweet_count,
+                                                    "Followers Count": tweet.user.followers_count}
+
+    for username, tweetData in formatTweetsData.items():
+        text = tweetData["Text"]
+        spamPoint = 0
+        for trend in trendNames:
+            if trend in text:
+                spamPoint += 1
+        tweetData["Spam Point"] = spamPoint
+        if tweetData["Spam Point"] > minTrendSpamPoint:
+            if tweetData["Followers Count"] < maxFollowCount:
+                if tweetData["Retweet Count"] < maxRetweetCount:
+                    if not username in usersToBlockOrMute:
+                        usersToBlockOrMute.append(username)
+
+def BlockOrMuteUsers(username, action):
+    try:
+        user = api.get_user(screen_name = username)
+        userFriendship = api.get_friendship(target_screen_name = username)
+        isBlocked = userFriendship[0].blocking
+        if isBlocked == False:
+            if action == "block":
+                api.create_block(user_id = user.id)
+                blockedUsers.append(username)
+            elif action == "mute":
+                api.create_mute(user_id = user.id)
+                mutedUsers.append(username)
+        else:
+            print(f"{username} zaten engellenmiş.")
+    except tweepy.TweepyException as e:
+        print(f"Kullanıcı işleminde hata: {username}")
+
+WriteToFile()
+if len(trendNames) <= 0:
+    print("Trend listesi boş. İşlem sonlandırıldı.")
+else:
+    print("Tweetler analiz ediliyor.")
+    for trend in trendNames:
+        analyzeTweets(trend)
+    print("Tweetler analiz edildi")
+    blockOrMute = input("Yapılacak işlemi seç. Engelle(E), Sessize Al(S), Vazgeç(V): ")
+    if blockOrMute.lower() == "e":
+        for user in usersToBlockOrMute:
+            BlockOrMuteUsers(user, "block")
+    elif blockOrMute.lower() == "s":
+        for user in usersToBlockOrMute:
+            BlockOrMuteUsers(user, "mute")
+    else:
+        print("Tespit edilen şüpheli kullanıcılar: ", usersToBlockOrMute)
+
+    if len(blockedUsers) > 0:
+        print("Engellenen kullanıcılar: ")
+        for user in blockedUsers:
+            print(user)
+    elif len(mutedUsers) > 0:
+        print("Sessize alınan kullanıcılar")
+        for user in mutedUsers:
+            print(user)
+    else:
+        print("Hiç bir kullanıcıya işlem yapılmadı")
+
+    saveResult = input("Yapılan işlemler result.txt dosyasına yazılsın mı? (E/H): ")
+    if saveResult.lower() == "e":
+        with open("result.txt", "w", encoding="UTF-8") as resultfile:
+            resultfile.write("Engellenen kullanıcılar\n")
+            json.dump(blockedUsers, resultfile, indent=4)
+            resultfile.write("\n\n")
+            resultfile.write("Sessize alınan kullanıcılar\n")
+            json.dump(mutedUsers, resultfile, indent=4)
+            resultfile.write("\n\n")
+            resultfile.write("Analiz edilen tüm tweetler\n")
+            json.dump(formatTweetsData, resultfile, indent=4)
