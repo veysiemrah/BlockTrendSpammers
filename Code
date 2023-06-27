@@ -3,6 +3,7 @@ import requests
 import datetime
 import tweepy
 import os
+from tqdm import tqdm
 
 #Analiz için ayarlar
 #TrendSpamPoint tweet içerisinde trend kelimelerden kaç tane geçtiğini gösterir.
@@ -78,7 +79,7 @@ def WriteToFile():
                 file.write("Son Güncelleme: " + currentTime.strftime("%d.%m.%Y %H:%M:%S") + " " + writeSource)
         else:
             print("Trend listesi güncellenmedi.")
-            with open(filePath, "w", encoding="UTF-8") as file:
+            with open(filePath, "r", encoding="UTF-8") as file:
                 trendNames = [x.strip() for x in lines[:-1]]
 
 def analyzeTweets(searchKey):
@@ -95,7 +96,7 @@ def analyzeTweets(searchKey):
             if trend in text:
                 spamPoint += 1
         tweetData["Spam Point"] = spamPoint
-        if tweetData["Spam Point"] > minTrendSpamPoint:
+        if tweetData["Spam Point"] >= minTrendSpamPoint:
             if tweetData["Followers Count"] < maxFollowCount:
                 if tweetData["Retweet Count"] < maxRetweetCount:
                     if not username in usersToBlockOrMute:
@@ -123,9 +124,9 @@ if len(trendNames) <= 0:
     print("Trend listesi boş. İşlem sonlandırıldı.")
 else:
     print("Tweetler analiz ediliyor.")
-    for trend in trendNames:
+    for trend in tqdm(trendNames, desc="Twitler analiz ediliyor."):
         analyzeTweets(trend)
-    print("Tweetler analiz edildi")
+    print("Analiz tamamlandı")
     blockOrMute = input("Yapılacak işlemi seç. Engelle(E), Sessize Al(S), Vazgeç(V): ")
     if blockOrMute.lower() == "e":
         for user in usersToBlockOrMute:
